@@ -1,0 +1,191 @@
+// components/quiz-system.tsx
+import React, { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
+import { database } from '../lib/database';
+import { Quiz, QuizAttempt } from '../types';
+
+const QuizSystem: React.FC = () => {
+const [user, setUser] = useState({ id: '1' });
+const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([]);
+
+const loadData = async () => {
+  const quizzesData = await database.getQuizzes(user.id);
+  const attemptsData = await database.getQuizAttempts(user.id);
+  setQuizzes(quizzesData);
+  setQuizAttempts(attemptsData);
+};
+
+const getTotalQuestions = (quiz: Quiz) => {
+  const q = (quiz as any);
+  if (typeof q.total_questions === "number") return q.total_questions;
+  if (Array.isArray(quiz.questions)) return quiz.questions.length;
+  return 0;
+};
+
+const getEstimatedTime = (quiz: Quiz) => {
+  const q = (quiz as any);
+  if (typeof q.estimated_time === "number") return q.estimated_time;
+  const total = getTotalQuestions(quiz);
+  return Math.max(1, Math.ceil(total * 1.5));
+};
+
+const getAttemptPercentage = (a: QuizAttempt) => {
+  const anyA = a as any;
+  if (typeof anyA.percentage === "number") return anyA.percentage;
+  const score = typeof anyA.score === "number" ? anyA.score : 0;
+  const max = typeof anyA.max_score === "number" ? anyA.max_score : (typeof anyA.total_questions === "number" ? anyA.total_questions : 0);
+  if (max <= 0) return 0;
+  return Math.round((score / max) * 100);
+};
+
+const getQuizStats = (quiz: Quiz) => {
+  const percentages = quizAttempts.map((a) => getAttemptPercentage(a));
+  const bestScore = percentages.length > 0 ? Math.max(...percentages) : 0;
+  const avgScore = percentages.length > 0 ? Math.round(percentages.reduce((s, p) => s + p, 0) / percentages.length) : 0;
+  return { bestScore, avgScore };
+};
+
+const deleteQuiz = async (quizId: string) => {
+  try {
+    if (typeof (database as any).deleteQuiz === "function") {
+      await (database as any).deleteQuiz(quizId);
+    }
+    setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
+    toast({
+      title: "Quiz Deleted",
+      description: "Quiz has been removed successfully",
+    });
+  } catch (error) {
+    toast({
+      title: "Error",
+      description: "Failed to delete quiz",
+      variant: "destructive",
+    });
+  }
+};
+
+useEffect(() => {
+  loadData();
+}, [user]);
+
+return (
+  <div>
+    {quizzes.map((quiz) => (
+      <div key={quiz.id}>
+        <h2>{quiz.title}</h2>
+        <p>Estimated Time: {getEstimatedTime(quiz)}</p>
+        <p>Total Questions: {getTotalQuestions(quiz)}</p>
+        <span>{(quiz as any).topic ?? 'General'}</span>
+        <button onClick={() => deleteQuiz(quiz.id)}>Delete Quiz</button>
+      </div>
+    ))}
+  </div>
+);
+};
+
+export default QuizSystem;
+
+// lib/database.ts
+import { DemoDatabase } from './DemoDatabase';
+import { ProductionDatabase } from './ProductionDatabase';
+
+export const database = process.env.NODE_ENV === 'production' ? new ProductionDatabase() : new DemoDatabase();
+
+// DemoDatabase.ts
+import { Quiz, QuizAttempt } from '../types';
+
+class DemoDatabase {
+async getQuizzes(userId: string): Promise<Quiz[]> {
+  const raw = localStorage.getItem(`demo_quizzes_${userId}`);
+  return raw ? JSON.parse(raw) : [];
+}
+
+async getQuizAttempts(userId: string): Promise<QuizAttempt[]> {
+  const raw = localStorage.getItem(`demo_attempts_${userId}`);
+  return raw ? JSON.parse(raw) : [];
+}
+
+async deleteQuiz(quizId: string): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith("demo_quizzes_")) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const arr: Quiz[] = JSON.parse(raw);
+        const next = arr.filter((q) => (q as any).id !== quizId);
+        if (next.length !== arr.length) {
+          localStorage.setItem(key, JSON.stringify(next));
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Demo deleteQuiz failed:", e);
+  }
+}
+
+async getUserQuizzes(userId: string): Promise<Quiz[]> {
+  return this.getQuizzes(userId);
+}
+
+async getUserQuizAttempts(userId: string): Promise<QuizAttempt[]> {
+  return this.getQuizAttempts(userId);
+}
+}
+
+export { DemoDatabase };
+
+// ProductionDatabase.ts
+import { Quiz, QuizAttempt } from '../types';
+import { supabase } from './supabaseClient';
+
+class ProductionDatabase {
+async getQuizzes(userId: string): Promise<Quiz[]> {
+  const { data, error } = await supabase.from('quizzes').select('*').eq('user_id', userId);
+  if (error) throw error;
+  return data;
+}
+
+async getQuizAttempts(userId: string): Promise<QuizAttempt[]> {
+  const { data, error } = await supabase.from('quiz_attempts').select('*').eq('user_id', userId);
+  if (error) throw error;
+  return data;
+}
+
+async deleteQuiz(quizId: string): Promise<void> {
+  const { error } = await supabase.from("quizzes").delete().eq("id", quizId);
+  if (error) throw error;
+}
+
+async getUserQuizzes(userId: string): Promise<Quiz[]> {
+  return this.getQuizzes(userId);
+}
+
+async getUserQuizAttempts(userId: string): Promise<QuizAttempt[]> {
+  return this.getQuizAttempts(userId);
+}
+}
+
+export { ProductionDatabase };
+
+// types.ts
+export interface Quiz {
+id: string;
+title: string;
+topic?: string;
+total_questions?: number;
+questions?: any[];
+estimated_time?: number;
+}
+
+export interface QuizAttempt {
+id: string;
+quiz_id: string;
+user_id: string;
+score?: number;
+max_score?: number;
+percentage?: number;
+}
