@@ -1,4 +1,4 @@
-const apiKey = "AIzaSyBKwvDL7U0Or2ThSJ4gs0IjmD9iGwcn1kw";
+const apiKey = "your_secret_api_key_here";
 const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
 
 async function listModels() {
